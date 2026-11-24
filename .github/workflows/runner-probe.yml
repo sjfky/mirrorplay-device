@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 mirrorplay contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+# Manual runner availability probe for macOS. This workflow is kept out of push paths
+# so it checks runner capacity without kicking the full iOS CI.
+
+name: runner-probe
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-12, macos-13, macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Echo runner capacity
+        run: |
+          set -eu
+          uname -a
+          sw_vers
+          xcodebuild -version
