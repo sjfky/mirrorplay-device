@@ -345,6 +345,10 @@ public final class ProjectionDevice: @unchecked Sendable {
         geometryLock.unlock()
 
         let old = currentEncoder()
+        if old.running, old.width == geometry.width, old.height == geometry.height, old.fps == geometry.fps, old.bitrate == geometry.bitrate {
+            return
+        }
+
         let made: H264Encoder
         if old.width != geometry.width || old.height != geometry.height || old.fps != geometry.fps || old.bitrate != geometry.bitrate {
             old.stop()
