@@ -1,0 +1,19 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 mirrorplay contributors
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+<!-- The app icon at its own size, so the icon the phone installs is a real bitmap rendered by the
+     same engine as the rest of the project. See scripts/build-icons.mjs. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body { margin: 0; padding: 0; background: #0a0d11; }
+      img { display: block; width: 100%; height: 100%; }
+    </style>
+  </head>
+  <!-- A relative src: the same file then works both served by the relay (/web/icon.html) and opened
+       straight from disk by scripts/build-icons.mjs, which renders the icons over file://. -->
+  <body><img src="icons/app-icon.svg" alt="" /></body>
+</html>

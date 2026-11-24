@@ -1,0 +1,12 @@
+node_modules/
+bin/ffmpeg
+bin/*.part
+device-ios/.build/
+device-ios/mirrorplay-device.xcodeproj/
+device-ios/build/
+DeviceKit.build/
+*.log
+.probe-*
+.tmp/
+device-ios/.ipa-test/
+.ipa-test/

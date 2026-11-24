@@ -1,0 +1,167 @@
+# SPDX-FileCopyrightText: 2026 mirrorplay contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+# iPhone device end: byte parity first (cheap, runs anywhere), then a build on Apple hardware.
+#
+# What this pipeline can and cannot hand you, stated where it happens rather than in a footnote:
+#
+#   parity job      → the Swift↔JavaScript byte agreement, the relay suites, and the ipa container
+#                     tests. Runs on Linux, because none of that needs Apple's toolchain.
+#   ios-app job     → a device build and an .xcarchive, plus an *unsigned* Payload-correct .ipa.
+#                     That unsigned file is the input to a signing step: SideStore / AltStore /
+#                     Sideloadly on your side, or codesign + exportArchive with a certificate.
+#   ios-app (TEAM_ID) → a signed, installable .ipa, which requires the certificate to be in the
+#                     repository's secrets. Without it the job stops with a message instead of
+#                     labelling an unsigned file "signed".
+
+name: ios-device
+
+on:
+  workflow_dispatch:
+    inputs:
+      team_id:
+        description: 'Apple developer Team ID — leave empty for an unsigned container'
+        required: false
+        type: string
+  push:
+    paths:
+      - 'device-ios/**'
+      - 'src/protocol/**'
+      - 'src/media/**'
+      - 'scripts/**'
+      - 'test/**'
+      - '.github/workflows/ios-device.yml'
+  pull_request:
+    paths:
+      - 'device-ios/**'
+      - 'src/protocol/**'
+      - 'src/media/**'
+      - 'test/**'
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: ffmpeg, because the fixtures must be a real encode and not invented bytes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Node suites — wire format, H.264 containers, session rules, live relay, ipa packaging
+        run: |
+          npm ci
+          npm run test:pages
+          npm test
+      - name: Regenerate the byte fixtures and require no diff
+        run: |
+          set -eu
+          # device-ios/Fixtures is committed so a Mac can run `swift test` with no ffmpeg present. A
+          # diff here means the Swift and JavaScript codecs no longer agree, or the committed bytes
+          # went stale — both are worth failing on.
+          npm run fixtures:ios
+          git diff --exit-code device-ios/Fixtures || {
+            echo '::error::device-ios/Fixtures no longer match what src/protocol and src/media emit.'
+            exit 1
+          }
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '5.9'
+      - name: Swift fixture tests — the same files, read by the other language
+        working-directory: device-ios
+        run: swift test
+
+  ios-app:
+    needs: parity
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: xcodegen, because a pbxproj nobody can review is not an artifact
+        run: brew install xcodegen
+      - name: Swift fixture tests on the runner's own toolchain
+        working-directory: device-ios
+        run: swift test
+      - run: npm ci
+      - name: Generate the Xcode project from project.yml
+        working-directory: device-ios
+        run: xcodegen generate
+      - name: Archive for a device
+        working-directory: device-ios
+        env:
+          TEAM_ID: ${{ inputs.team_id }}
+        run: |
+          set -eu
+          if [ -n "${TEAM_ID:-}" ]; then
+            xcodebuild -project mirrorplay-device.xcodeproj -scheme mirrorplay-device \
+              -configuration Release -destination 'generic/platform=iOS' \
+              -archivePath build/mirrorplay-device.xcarchive \
+              DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic \
+              build archive
+          else
+            xcodebuild -project mirrorplay-device.xcodeproj -scheme mirrorplay-device \
+              -configuration Release -destination 'generic/platform=iOS' \
+              -archivePath build/mirrorplay-device.xcarchive \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY='-' \
+              build archive
+          fi
+      - name: Package the unsigned container (the input your signing step eats)
+        working-directory: device-ios
+        run: |
+          set -eu
+          app=build/mirrorplay-device.xcarchive/Products/Applications/mirrorplay-device.app
+          test -d "$app" || { echo "::error::no bundle at $app — the archive step did not produce one" >&2; exit 4; }
+          sh package-ipa.sh "$app" build/mirrorplay-unsigned.ipa
+      - name: Export a signed .ipa when the identity is really in the vault
+        if: ${{ inputs.team_id != '' }}
+        working-directory: device-ios
+        env:
+          TEAM_ID: ${{ inputs.team_id }}
+          # These belong to whoever owns the repository, and are never committed or invented here.
+          P12_BASE64: ${{ secrets.IOS_SIGNING_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${P12_BASE64:-}" ]; then
+            echo "TEAM_ID was given but IOS_SIGNING_CERT_P12_BASE64 is not set."
+            echo "Stopping rather than calling an unsigned artifact signed. The unsigned container from build/mirrorplay-unsigned.ipa is yours to sign with SideStore/AltStore/Sideloadly."
+            exit 5
+          fi
+          KEYCHAIN=ci.keychain
+          security create-keychain -p ci "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p ci "$KEYCHAIN"
+          printf '%s' "$P12_BASE64" | base64 --decode > cert.p12
+          security import cert.p12 -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k ci "$KEYCHAIN"
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>development</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>compileBitcode</key><false/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath build/mirrorplay-device.xcarchive \
+            -exportOptionsPlist ExportOptions.plist -exportPath build/ipa
+      - name: Upload the unsigned Payload container
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirrorplay-unsigned-ipa
+          path: device-ios/build/mirrorplay-unsigned.ipa
+          if-no-files-found: error
+      - name: Upload the signed .ipa only after a real signing export
+        if: ${{ inputs.team_id != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirrorplay-signed-ipa
+          path: device-ios/build/ipa
+          if-no-files-found: error

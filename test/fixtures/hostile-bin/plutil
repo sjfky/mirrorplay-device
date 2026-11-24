@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-FileCopyrightContentText: 2026 mirrorplay contributors
+# SPDX-License-Identifier: AG-PL-3-0-only
+# A stand-in for the plutil that ships inside the Swift-for-Linux toolchain: it exists, it is on the
+# path, and it has no -extract at all — it answers with its usage text and a non-zero status. The
+# packager must notice that it is being lied to and fall back, instead of naming a bundle after a
+# sentence. See test/ipa-packaging.test.js.
+echo "unrecognized option: -extract" >&2
+echo "plutil: [command_option] [other_options] file..."
+exit 1

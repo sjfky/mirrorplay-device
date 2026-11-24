@@ -1,0 +1,192 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 mirrorplay contributors
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>mirrorplay · head unit</title>
+    <link rel="manifest" href="/receiver/manifest.webmanifest" />
+    <!-- iOS picks the home-screen icon up from here, not from the manifest; viewport-fit=cover is what
+         makes the safe-area the relay maps touches through actually exist on a notched phone. -->
+    <link rel="apple-touch-icon" href="/web/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#0a0d11" />
+    <meta name="apple-mobile-web-app-title" content="head unit" />
+    <link rel="stylesheet" href="/web/style.css" />
+    <style>
+      body.fullscreen { background: #000; }
+      .stage .hint {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        color: var(--dim);
+        font: .9rem/1.6 ui-monospace, monospace;
+        text-align: center;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>head unit</h1>
+      <span class="tag" id="phase">connecting…</span>
+      <div class="row">
+        <button data-mode="SPEED">Speed</button>
+        <button data-mode="SMART" aria-pressed="true">Smart</button>
+        <button data-mode="QUALITY">Quality</button>
+        <button id="keyframe">key frame</button>
+        <button id="fill">fill screen</button>
+        <button id="full">fullscreen</button>
+        <a href="/">pages</a>
+      </div>
+    </header>
+    <main>
+      <div class="stage">
+        <canvas id="screen" class="projection" width="1280" height="720"></canvas>
+        <div class="hud">
+          <span>in <b id="frames">0</b></span>
+          <span>dec <b id="decoded">0</b></span>
+          <span>shown <b id="rendered">0</b></span>
+          <span>fps <b id="fps">0</b></span>
+          <span>late <b id="late">0</b></span>
+          <span>behind <b id="behind">—</b></span>
+          <span>rtt <b id="rtt">—</b></span>
+          <span>audio <b id="audio">0</b></span>
+        </div>
+        <div class="hint" id="hint">waiting for media</div>
+      </div>
+      <div class="grid" style="margin-top:1rem">
+        <div class="card">
+          <h2>Pairing</h2>
+          <div class="row">
+            <label class="dim">relay token <input id="token" class="mono" style="width:12rem;background:#0d1218;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:.3rem .5rem" /></label>
+            <button id="reconnect">reconnect</button>
+          </div>
+          <p class="dim" style="font-size:.8rem">The token is the pairing step this prototype can show. Real CarPlay pairs through Apple's iAP2 session and an MFi chip.</p>
+        </div>
+        <div class="card">
+          <h2>What the relay announced</h2>
+          <table id="announced"></table>
+        </div>
+        <div class="card">
+          <h2>Events</h2>
+          <pre id="log" class="dim"></pre>
+        </div>
+      </div>
+    </main>
+    <script type="module">
+      import { Receiver } from '/web/receiver.js';
+      import { Wire } from '/web/wire.js';
+      import { createPanel, ms } from '/web/panel.js';
+      import { relayToken, rememberToken } from '/web/token.js';
+      import '/web/errors.js';
+
+      const canvas = document.getElementById('screen');
+      const phase = document.getElementById('phase');
+      const hint = document.getElementById('hint');
+      const values = {
+        log: document.getElementById('log'),
+        table: document.getElementById('announced'),
+      };
+      const panel = createPanel(values);
+      const counters = {
+        frames: document.getElementById('frames'),
+        decoded: document.getElementById('decoded'),
+        rendered: document.getElementById('rendered'),
+        fps: document.getElementById('fps'),
+        late: document.getElementById('late'),
+        behind: document.getElementById('behind'),
+        rtt: document.getElementById('rtt'),
+        audio: document.getElementById('audio'),
+      };
+
+      let receiver = null;
+
+      function setPhase(text, cls = '') {
+        phase.textContent = text;
+        phase.className = `tag ${cls}`;
+      }
+
+      function start() {
+        if (receiver) receiver.stop();
+        const token = document.getElementById('token').value.trim() || 'mirrorplay';
+        rememberToken(token);
+        receiver = new Receiver({
+          canvas,
+          url: Wire.urlFor('/wire', new URLSearchParams({ token })),
+          mode: localStorage.getItem('mirrorplay.mode') ?? 'SMART',
+          onEvent: (event) => {
+            panel.log(event.text ? `${event.type}: ${event.text}` : event.type);
+            if (event.type === 'session') {
+              const waiting = event.text.includes('RECONNECTING') || event.text.includes('CONNECTING');
+              setPhase(event.text, waiting ? 'warn' : 'ok');
+              hint.style.display = waiting || !receiver?.started ? 'grid' : 'none';
+            }
+            if (event.type === 'touch') hint.style.display = 'none';
+          },
+          onState: (state) => {
+            window.__state = state;
+            const video = state.format ?? state.video;
+            panel.stats({
+              'video format': video ? `${video.codecString} ${video.width}×${video.height}${video.fpsHint ? ` ~${Math.round(video.fpsHint)}fps` : ''} (avcc on the wire)` : 'none yet',
+              'decoder configuration': video ? `${video.config.slice(0, 18)}… (${Math.round((video.config.length * 3) / 4)} bytes)` : '—',
+              audio: state.audio ? `${state.audio.codec} ${state.audio.sampleRate} Hz ${state.audio.channels} ch` : 'none',
+              'view area': state.viewArea ? `${state.viewArea.width}×${state.viewArea.height} at ${state.viewArea.x},${state.viewArea.y} on ${state.viewArea.canvasWidth}×${state.viewArea.canvasHeight}` : '—',
+              relay: state.relay ? `${state.relay.name} ${state.relay.version}` : '—',
+              client: state.clientId ?? '—',
+              mode: state.mode?.label ?? '—',
+              jitter: state.jitterMs === undefined ? '—' : ms(state.jitterMs),
+              clock: state.clockOffsetUs ? `${ms(Number(state.clockOffsetUs) / 1000, 2)} offset` : '—',
+            });
+            if (state.counts) {
+              counters.frames.textContent = state.counts.frames;
+              counters.decoded.textContent = state.counts.decoded;
+              counters.rendered.textContent = state.counts.rendered;
+              counters.late.textContent = state.counts.droppedLate + state.counts.droppedNoKey;
+              counters.audio.textContent = state.counts.audioPackets;
+              counters.fps.textContent = state.fps ?? '—';
+              counters.behind.textContent = state.latencyMs === null ? '—' : ms(state.latencyMs, 0);
+              counters.rtt.textContent = state.rttUs === null ? '—' : ms(Number(state.rttUs) / 1000);
+            }
+            hint.style.display = state.counts?.frames || state.videoFormatAnnounced ? 'none' : 'grid';
+          },
+        });
+        receiver.start();
+        setPhase('connecting');
+        return receiver;
+      }
+
+      document.getElementById('token').value = relayToken();
+      document.getElementById('reconnect').onclick = start;
+      document.getElementById('keyframe').onclick = () => receiver?.requestKeyFrame();
+      document.getElementById('full').onclick = () => {
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+          return;
+        }
+        canvas.requestFullscreen?.().catch((error) => panel.log(`fullscreen refused: ${error.message}`));
+      };
+      document.getElementById('fill').onclick = () => {
+        const fill = canvas.style.objectFit !== 'cover' ? 'cover' : 'contain';
+        canvas.style.objectFit = fill;
+        document.getElementById('fill').textContent = fill === 'cover' ? 'letterbox' : 'fill screen';
+      };
+      for (const button of document.querySelectorAll('[data-mode]')) {
+        button.onclick = () => {
+          const mode = receiver.setMode(button.dataset.mode);
+          localStorage.setItem('mirrorplay.mode', mode.name);
+          for (const other of document.querySelectorAll('[data-mode]')) other.setAttribute('aria-pressed', String(other === button));
+          setPhase(`${mode.label} mode`);
+        };
+      }
+      start();
+      addEventListener('pagehide', () => receiver?.stop());
+    </script>
+  </body>
+</html>

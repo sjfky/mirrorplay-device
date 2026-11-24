@@ -1,0 +1,106 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 mirrorplay contributors
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>mirrorplay · device</title>
+    <link rel="manifest" href="/input/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/web/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#0a0d11" />
+    <meta name="apple-mobile-web-app-title" content="device" />
+    <link rel="stylesheet" href="/web/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>device · phone stand-in</h1>
+      <span class="tag" id="phase">not capturing</span>
+      <div class="row">
+        <button id="screen" class="ok">Share screen</button>
+        <button id="camera">Use camera</button>
+        <button id="stop">Stop</button>
+        <span class="tag mono" id="badge">idle</span>
+      </div>
+    </header>
+    <main>
+      <p class="dim">
+        This tab takes the phone's place. It encodes its own screen (or the camera) into the
+        projection and receives the touch and keys the head unit produces. Touches are drawn into the
+        picture before encoding, so what you tap in the car comes back to the car one round trip later.
+      </p>
+      <div class="grid">
+        <div class="card">
+          <h2>Encoded picture</h2>
+          <canvas id="preview" class="thumb" width="640" height="360"></canvas>
+          <video id="cam" class="hidden" muted playsinline></video>
+        </div>
+        <div class="card">
+          <h2>Encoder</h2>
+          <table id="stats"></table>
+        </div>
+        <div class="card">
+          <h2>Events</h2>
+          <pre id="log" class="dim"></pre>
+        </div>
+      </div>
+    </main>
+    <script type="module">
+      import { DeviceSender, ENCODER_CANDIDATES } from '/web/device.js';
+      import { createPanel, kbytes } from '/web/panel.js';
+      import { Wire } from '/web/wire.js';
+      import { relayToken, rememberToken } from '/web/token.js';
+      import '/web/errors.js';
+
+      const panel = createPanel({ log: document.getElementById('log'), table: document.getElementById('stats') });
+      const phase = document.getElementById('phase');
+      const badge = document.getElementById('badge');
+      const video = document.getElementById('cam');
+      const preview = document.getElementById('preview');
+
+      const sender = new DeviceSender({
+        video,
+        canvas: preview,
+        url: Wire.urlFor('/input-wire'),
+        onEvent: (event) => {
+          panel.log(`${event.type}: ${event.text ?? ''}`);
+          if (event.running === true || event.type === 'capture') phase.textContent = `capturing ${event.size ?? ''}`;
+          if (event.running === false) phase.textContent = 'not capturing';
+          if (event.type === 'error') {
+            phase.textContent = (event.text ?? '').slice(0, 72);
+            phase.className = 'tag bad';
+          }
+        },
+        onStats: (stats) => {
+          window.__deviceState = { ...stats, formatAnnounced: sender.formatAnnounced, running: sender.running, encoder: sender.encoder?.state ?? null, queue: sender.encoder?.encodeQueueSize ?? null };
+          badge.textContent = `${stats.packets} frames · ${stats.contacts} touch`;
+          if (sender.codec === undefined) return;
+          panel.stats({
+            codec: sender.codec ?? 'not chosen yet',
+            size: `${preview.width}×${preview.height}`,
+            fps: sender.fps,
+            'frames sent': stats.packets,
+            'idr frames': stats.keyPackets,
+            out: kbytes(stats.kibibytes * 1024),
+            'encoder queue': stats.queue,
+            'touch echoed': stats.contacts,
+            'format announced': sender.formatAnnounced ? 'yes' : 'waiting for the encoder',
+          });
+        },
+      });
+      sender.connect();
+
+      document.getElementById('screen').onclick = () => sender.start({ source: 'screen' }).catch((error) => panel.log(`capture refused: ${error.message}`));
+      document.getElementById('camera').onclick = () => sender.start({ source: 'camera' }).catch((error) => panel.log(`capture refused: ${error.message}`));
+      document.getElementById('stop').onclick = () => sender.stop();
+      addEventListener('pagehide', () => sender.stop());
+      panel.log(`token ${relayToken()} from ${location.search ? 'the url' : 'the stored default'}`);
+      rememberToken(new URL(Wire.urlFor('/input-wire')).searchParams.get('token'));
+    </script>
+  </body>
+</html>

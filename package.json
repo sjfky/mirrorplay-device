@@ -1,0 +1,26 @@
+{
+  "name": "mirrorplay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "A projection relay in the shape of OpenXPlay: the same wire format and session model, carrying real H.264 into a head unit's browser through WebCodecs, with touch and keys going back to the source. Not CarPlay.",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "bin": {
+    "mirrorplay": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "test": "node --test \"test/*.test.js\"",
+    "test:pages": "python3 scripts/check-pages.py",
+    "test:browser": "node src/tools/browser-check.js",
+    "fixtures:ios": "node scripts/ios-fixtures.mjs",
+    "icons": "node scripts/build-icons.mjs",
+    "ffmpeg:get": "node scripts/fetch-ffmpeg.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

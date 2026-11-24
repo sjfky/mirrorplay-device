@@ -1,0 +1,140 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 mirrorplay contributors
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mirrorplay · can this browser be a head unit?</title>
+    <link rel="stylesheet" href="/web/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>head unit check</h1>
+      <span class="tag" id="verdict">probing…</span>
+    </header>
+    <main>
+      <p class="dim">
+        The web receiver needs one thing a phone browser does not always have: an H.264 decoder
+        reachable from <code>WebCodecs</code>, and a secure context. This page asks the relay for the
+        key frame it is actually sending and tries to decode it here. That is a better answer than a
+        feature list.
+      </p>
+      <div class="grid">
+        <div class="card"><h2>Browser</h2><table id="browser"></table></div>
+        <div class="card"><h2>Decoder probe</h2><table id="probe"></table></div>
+        <div class="card">
+          <h2>Decode the relay's own key frame</h2>
+          <table id="decode"></table>
+          <canvas id="frame" width="640" height="360" style="width:100%;background:#000;border-radius:8px;margin-top:.5rem"></canvas>
+        </div>
+        <div class="card"><h2>Touch and screen</h2><table id="screen"></table></div>
+      </div>
+    </main>
+    <script type="module">
+      import '/web/errors.js';
+      import { fromBase64 } from '/src/util/base64.js';
+
+      const row = (k, v, cls = '') => `<tr><td class="dim">${k}</td><td class="mono ${cls}">${v}</td></tr>`;
+      const good = (ok) => (ok ? 'ok' : 'bad');
+      document.getElementById('browser').innerHTML =
+        row('user agent', navigator.userAgent.slice(0, 72)) +
+        row('secure context', window.isSecureContext, good(window.isSecureContext)) +
+        row('WebCodecs VideoDecoder', 'VideoDecoder' in window, good('VideoDecoder' in window)) +
+        row('WebCodecs AudioDecoder', 'AudioDecoder' in window, good('AudioDecoder' in window)) +
+        row('WebSocket', 'WebSocket' in window, good('WebSocket' in window));
+
+      if (!('VideoDecoder' in window)) {
+        document.getElementById('verdict').textContent = 'no WebCodecs here';
+        document.getElementById('verdict').className = 'tag bad';
+      } else {
+        const candidates = ['avc1.42E01F', 'avc1.42001F', 'avc1.4D001F', 'avc1.640028', 'hev1.1.6.L93.B0'];
+        // These are codec-level questions: a browser may accept the codec string but refuse this
+        // relay's exact configuration, which the decode attempt below answers.
+        const results = await Promise.all(candidates.map((codec) => VideoDecoder.isConfigSupported({ codec }).catch(() => ({ supported: false }))));
+        document.getElementById('probe').innerHTML = candidates
+          .map((c, i) => row(c, results[i].supported ? 'supported' : 'no', good(results[i].supported)))
+          .join('');
+
+        let probe = null;
+        try {
+          probe = await fetch('/probe.json').then((r) => r.json());
+        } catch (error) {
+          document.getElementById('decode').innerHTML = row('relay unreachable', error.message, 'bad');
+        }
+        if (probe && !probe.available) document.getElementById('decode').innerHTML = row('no sample yet', probe.reason, 'warn');
+        if (probe?.available) {
+          const format = probe.format;
+          const bytes = new Uint8Array(await (await fetch(probe.url)).arrayBuffer());
+          const support = await VideoDecoder.isConfigSupported({
+            codec: format.codecString,
+            description: fromBase64(format.config),
+            ...(format.codec === 'H264' ? { avc: { format: 'avcc' } } : {}),
+          });
+          const outcomes = [row('relay format', `${format.codecString} ${format.width}×${format.height}`), row('sample bytes', bytes.length), row('configuration accepted', support.supported, good(support.supported))];
+          document.getElementById('decode').innerHTML = outcomes.join('');
+          if (support.supported) {
+            const attempt = await decodeOneFrame(bytes, format);
+            document.getElementById('decode').insertAdjacentHTML(
+              'beforeend',
+              attempt.picture
+                ? row('decoded picture', `${attempt.picture.width}×${attempt.picture.height}`, 'ok')
+                : row('decode attempt', attempt.failure ?? 'no frame', 'bad'),
+            );
+            if (attempt.picture) {
+              document.getElementById('verdict').textContent = 'this browser can show the projection';
+              document.getElementById('verdict').className = 'tag ok';
+            }
+          }
+        }
+      }
+
+      /**
+       * One access unit on its own is not enough to make a decoder emit, so the frame is flushed the
+       * way the end of a clip would be. The picture, if any, is painted into the canvas above.
+       */
+      async function decodeOneFrame(bytes, format, timeoutMs = 3000) {
+        const config = {
+          codec: format.codecString,
+          description: fromBase64(format.config),
+          ...(format.codec === 'H264' ? { avc: { format: 'avcc' } } : {}),
+        };
+        let picture = null;
+        let failure = null;
+        const decoder = new VideoDecoder({
+          output: (frame) => {
+            picture ??= { width: frame.displayWidth, height: frame.displayHeight, timestamp: frame.timestamp };
+            const canvas = document.getElementById('frame');
+            canvas.getContext('2d').drawImage(frame, 0, 0, canvas.width, canvas.height);
+            frame.close();
+          },
+          error: (error) => {
+            failure = error.message;
+          },
+        });
+        try {
+          decoder.configure(config);
+          decoder.decode(new EncodedVideoChunk({ type: 'key', timestamp: 0, data: bytes }));
+          await Promise.race([decoder.flush(), new Promise((ok) => setTimeout(ok, timeoutMs))]);
+        } catch (error) {
+          failure ??= error.message;
+        }
+        try {
+          decoder.close();
+        } catch {
+          /* a decoder that faulted is already closed */
+        }
+        return { picture, failure: failure ?? (picture ? null : `no frame within ${timeoutMs} ms`) };
+      }
+
+      document.getElementById('screen').innerHTML =
+        row('touch points', navigator.maxTouchPoints ?? 0) +
+        row('viewport', `${innerWidth}×${innerHeight} @ ${devicePixelRatio}x`) +
+        row('screen', `${screen.width ?? '—'}×${screen.height ?? '—'}`) +
+        row('orientation', screen.orientation?.type ?? 'unknown') +
+        row('fullscreen', document.fullscreenEnabled ?? false, good(document.fullscreenEnabled === true));
+    </script>
+  </body>
+</html>

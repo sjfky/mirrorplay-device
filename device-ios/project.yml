@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: 2026 mirrorplay contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# XcodeGen spec: one app target for the phone, wired to the local package for the protocol logic.
+# Written as a spec instead of a committed .xcodeproj because a pbxproj is a machine-generated file
+# that humans cannot review in a diff — this is reviewable, and `xcodegen generate` rebuilds the
+# project identically on any Mac.
+#
+#   brew install xcodegen
+#   cd device-ios && xcodegen generate && open mirrorplay-device.xcodeproj
+
+name: mirrorplay-device
+options:
+  bundleIdPrefix: org.example
+  deploymentTarget:
+    iOS: "16.0"
+  createGroups: false
+  developmentLanguage: en
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    # The package is pure logic; nothing here needs a bridging header or Objective-C.
+    ENABLE_TESTABILITY: true
+
+packages:
+  MirrorplayLogic:
+    path: .
+
+targets:
+  mirrorplay-device:
+    type: application
+    platform: iOS
+    sources:
+      - App
+    dependencies:
+      # The portable device libraries: wire format, H.264 container work, and the Foundation-only
+      # DeviceCoordinator that owns reconnection/resolution/pause/interruption rules.
+      - package: MirrorplayLogic
+        products: [MirrorplayWire, MirrorplayH264, MirrorplayDeviceKit]
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: mirrorplay
+        UILaunchScreen: {}
+        # A phone talking to a relay on the same Wi-Fi network is, to iOS, local-network access: no
+        # description string, no prompt, no connection.
+        NSLocalNetworkUsageDescription: mirrorplay reaches the projection relay on your Wi-Fi network to send this screen and receive taps.
+        # Recording is limited to this app's own frames (see App/MirrorplayDeviceApp.swift); there is
+        # no microphone here, so no microphone string is claimed either.
+        UIBackgroundModes: []
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        ITSAppUsesNonExemptEncryption: false
+        # Lab relays are reached over ws:// on the same LAN, which ATS would otherwise refuse.
+        # NSAllowsLocalNetworking keeps that path open for local addresses only and still demands
+        # wss:// for anything beyond them — the toggle in the app stays off the happy path.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    # No entitlements file on purpose: capturing this app's own frames with RPScreenRecorder asks
+    # for none. An app-group would only appear if a system broadcast extension were added, and that
+    # is a different product with different review consequences (see README).
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.example.mirrorplay.device
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+
+schemes:
+  mirrorplay-device:
+    build:
+      targets:
+        mirrorplay-device: all
+    run:
+      config: Debug
+    # No test action here: the fixture tests live in the package and are run with `swift test`, so
+    # the same suite runs the same way on a Mac and in CI, with no second copy to drift.

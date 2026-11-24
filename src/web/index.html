@@ -1,0 +1,93 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 mirrorplay contributors
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mirrorplay · projection relay</title>
+    <link rel="stylesheet" href="/web/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>mirrorplay</h1>
+      <span class="tag">H.264 into a browser · touch back to the source</span>
+      <span class="tag mono" id="phase">reading the relay…</span>
+    </header>
+    <main>
+      <p class="dim">
+        A relay built to the shape of <a href="https://github.com/OpenXPlay/OpenXPlay">OpenXPlay</a>: its wire format, its session
+        model, its receiver page. What flows through it is a synthetic scene or a browser tab rather than CarPlay, because CarPlay
+        needs an Apple-issued accessory (MFi) identity that no build of either project contains.
+      </p>
+      <div class="grid">
+        <div class="card">
+          <h2>Head unit</h2>
+          <p class="dim">The car's browser. Decodes the projection with WebCodecs and sends touch and keys back.</p>
+          <a id="receiver" class="mono" href="/receiver">/receiver</a>
+        </div>
+        <div class="card">
+          <h2>Device</h2>
+          <p class="dim">The phone's stand-in. Encodes its own screen or camera into the projection.</p>
+          <a id="input" class="mono" href="/input">/input</a>
+        </div>
+        <div class="card">
+          <h2>Relay</h2>
+          <p class="dim">Session, per-receiver statistics, touch read-out, scene buttons, event trace.</p>
+          <a class="mono" href="/admin">/admin</a>
+        </div>
+        <div class="card">
+          <h2>Self-check</h2>
+          <p class="dim">Open this in the car browser first: it decodes a frame from this relay and says whether it worked.</p>
+          <a class="mono" href="/check">/check</a>
+        </div>
+        <div class="card">
+          <h2>iPhone, without a Mac</h2>
+          <p class="dim">In Safari: <b>Share → Add to Home Screen</b>. The shortcut opens already paired,
+            because the relay generates the manifest and puts its token in the icon's URL — the reason this
+            is generated rather than written by hand.</p>
+          <p class="dim" style="font-size:.78rem">This is the stand-in for an .ipa when nothing can sign one.
+            A web page gets the camera, never the phone's own display: pictures that leave the app you are in
+            still need the native target, and that needs a Mac.</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:1rem">
+        <h2>Live session</h2>
+        <pre id="state">loading…</pre>
+      </div>
+      <div class="card" style="margin-top:1rem">
+        <h2>What is real, what is standing in</h2>
+        <table>
+          <tr><td class="dim">wire protocol</td><td>24-byte little-endian header · AVCC video · AAC audio · touch and key payloads · JSON control messages on the same socket</td></tr>
+          <tr><td class="dim">session model</td><td>phases with reasons · format announcements · key frame gating · gap flags · backpressure resync · request coalescing</td></tr>
+          <tr><td class="dim">receiver</td><td>WebCodecs decode · view-area mapping · speed/quality/smart · statistics · clock round trip</td></tr>
+          <tr><td class="dim">source</td><td>real H.264: libx264 in the relay, or a browser tab's own screen through WebCodecs</td></tr>
+          <tr><td class="bad">not here</td><td>iAP2, AirPlay pairing, CarPlay control, RTSP media sets, MFi authentication. That is the part no implementation can reproduce without Apple credentials and NDA'd documents.</td></tr>
+        </table>
+      </div>
+    </main>
+    <script type="module">
+      import '/web/errors.js';
+      import { relayToken } from '/web/token.js';
+      const token = relayToken();
+      const query = `?token=${encodeURIComponent(token)}`;
+      document.getElementById('receiver').href = `/receiver${query}`;
+      document.getElementById('input').href = `/input${query}`;
+      const tick = async () => {
+        try {
+          const state = await fetch('/state.json').then((response) => response.json());
+          const session = state.projection.session;
+          document.getElementById('phase').textContent = `${session.phase}${session.reason ? ` · ${session.reason}` : ''}`;
+          document.getElementById('phase').className = `tag mono ${session.phase === 'ACTIVE' ? 'ok' : 'warn'}`;
+          document.getElementById('state').textContent = JSON.stringify(state.projection, null, 1);
+        } catch (error) {
+          document.getElementById('state').textContent = String(error);
+        }
+      };
+      await tick();
+      setInterval(tick, 2000);
+    </script>
+  </body>
+</html>

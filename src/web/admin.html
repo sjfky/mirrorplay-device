@@ -1,0 +1,147 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 mirrorplay contributors
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mirrorplay · relay</title>
+    <link rel="stylesheet" href="/web/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>relay</h1>
+      <span class="tag mono" id="identity">—</span>
+      <span class="tag" id="phase">—</span>
+      <span class="tag mono" id="uptime">—</span>
+    </header>
+    <main>
+      <div class="grid">
+        <div class="card">
+          <h2>Media</h2>
+          <table id="media"></table>
+        </div>
+        <div class="card">
+          <h2>Session model</h2>
+          <table id="session"></table>
+        </div>
+        <div class="card">
+          <h2>Inputs</h2>
+          <div id="inputs" class="dim">none</div>
+          <div class="row" id="scenes" style="margin-top:.6rem"></div>
+          <div class="row" style="margin-top:.4rem">
+            <button data-action="keyframe">ask for a key frame</button>
+            <button data-action="restart">restart the source</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Last input from a head unit</h2>
+          <div id="touch" class="mono">—</div>
+          <canvas id="touchmap" width="320" height="180" style="width:100%;background:#000;border-radius:8px;margin-top:.5rem"></canvas>
+        </div>
+      </div>
+      <div class="card" style="margin-top:1rem">
+        <h2>Receivers</h2>
+        <table id="receivers"></table>
+      </div>
+      <div class="card" style="margin-top:1rem">
+        <h2>Trace</h2>
+        <pre id="trace" class="dim"></pre>
+      </div>
+    </main>
+    <script type="module">
+      import '/web/errors.js';
+      const rows = (list) => list.map(([k, v, cls = '']) => `<tr><td class="dim">${k}</td><td class="mono ${cls}">${v}</td></tr>`).join('');
+      const cell = (label, value, cls = '') => `<tr><td class="dim">${label}</td><td class="mono ${cls}">${value}</td></tr>`;
+
+      async function refresh() {
+        const response = await fetch('/state.json?trace=1');
+        if (!response.ok) return;
+        const state = await response.json();
+        const p = state.projection;
+        document.getElementById('identity').textContent = `${state.origin} · token ${state.token}`;
+        document.getElementById('phase').textContent = `${p.session.phase}${p.session.reason ? ` (${p.session.reason})` : ''}`;
+        document.getElementById('uptime').textContent = `${(Number(state.clockUs) / 1e6).toFixed(1)} s clock`;
+
+        const v = p.video;
+        document.getElementById('media').innerHTML =
+          cell('video', v ? `${v.codecString} · ${v.width}×${v.height}${v.fpsHint ? ` · ~${v.fpsHint}fps` : ''}` : 'no format yet', v ? 'ok' : 'warn') +
+          cell('audio', p.audio ? `${p.audio.codec} · ${p.audio.sampleRate} Hz · ${p.audio.channels} ch` : 'no audio format') +
+          cell('frames', `${p.stats.frames} (${p.stats.keyFrames} IDR, ${(p.stats.bytes / 1048576).toFixed(1)} MiB)`) +
+          cell('key frame asks', `${p.stats.keyRequests} sent, ${p.stats.deferredKeyRequests} coalesced`) +
+          cell('backpressure drops', p.stats.droppedForBackpressure) +
+          cell('touch / keys', `${p.stats.touchEvents} / ${p.stats.keyEvents}`);
+
+        document.getElementById('session').innerHTML =
+          cell('session id', p.session.id) +
+          cell('phase', p.session.phase) +
+          cell('reason', p.session.reason ?? '—') +
+          cell('sources', p.sources.map((s) => `${s.kind}:${s.label ?? '?'}`).join(', ') || 'none') +
+          cell('receivers', p.receivers) +
+          cell('waiting for key', p.stats.awaitingKeyFrame);
+
+        document.getElementById('inputs').innerHTML =
+          state.inputs.length ? state.inputs.map((i) => `<div class="mono">#${i.id} ${i.label}${i.hello ? ` · displays ${i.hello.displays?.length ?? 0} · audio ${(i.hello.audio ?? []).join('/') || 'none'}` : ' · no hello yet'}</div>`).join('') : 'none';
+
+        const scenes = document.getElementById('scenes');
+        if (!scenes.dataset.ready) {
+          scenes.dataset.ready = '1';
+          scenes.innerHTML = (state.scenes ?? []).map((name) => `<button data-scene="${name}">${name}</button>`).join('');
+          scenes.addEventListener('click', (event) => event.target.dataset.scene && act({ type: 'scene', scene: event.target.dataset.scene }));
+        }
+        for (const button of scenes.querySelectorAll('[data-scene]')) {
+          button.setAttribute('aria-pressed', String(button.dataset.scene === state.options.scene));
+        }
+
+        const touch = p.lastTouch?.contacts ?? [];
+        document.getElementById('touch').textContent = p.lastTouch
+          ? `${touch.length} contact(s) at ${(Number(p.lastTouch.atUs) / 1e6).toFixed(2)}s — ${touch.map((c) => `#${c.id} ${c.x},${c.y}${c.pressed ? '' : ' ↑'}`).join(' ') || 'lifted'}`
+          : 'nothing touched yet';
+        const map = document.getElementById('touchmap').getContext('2d');
+        map.clearRect(0, 0, 320, 180);
+        map.strokeStyle = '#232a32';
+        map.strokeRect(0.5, 0.5, 319, 179);
+        map.fillStyle = '#4fd1a5';
+        for (const c of touch) {
+          map.beginPath();
+          map.arc(c.x * 320, c.y * 180, c.pressed ? 8 : 4, 0, Math.PI * 2);
+          map.fill();
+        }
+
+        document.getElementById('receivers').innerHTML = p.receiverDetail.length
+          ? '<tr><th>#</th><th>decoders</th><th>display</th><th>mode</th><th>sent</th><th>dropped</th><th>resync</th><th>fps</th><th>late</th><th>rtt</th><th>buffer</th></th></tr>' +
+            p.receiverDetail.map((r) => {
+              const hello = r.hello ?? {};
+              const stats = r.stats ?? {};
+              const display = (hello.displays ?? [])[0];
+              const rtt = stats.rttUs !== undefined && stats.rttUs !== null ? `${(Number(stats.rttUs) / 1000).toFixed(1)} ms` : '—';
+              return `<tr><td>${r.id}</td><td class="mono">${(hello.decoders ?? []).map((d) => d.codecString).join(' ') || '—'}</td>` +
+                `<td class="mono">${display ? `${display.width}×${display.height}@${Math.round(display.refreshHz)}` : '—'}</td>` +
+                `<td class="mono">${hello.playback ?? '—'}</td><td class="mono">${r.counts.sent}</td>` +
+                `<td class="mono ${r.counts.dropped ? 'warn' : ''}">${r.counts.dropped}</td><td class="mono">${r.counts.resyncs}</td>` +
+                `<td class="mono">${stats.renderedFps ?? '—'}</td><td class="mono">${stats.renderLateFrames ?? '—'}</td>` +
+                `<td class="mono">${rtt}</td><td class="mono">${stats.audioBufferedMs != null ? `${Math.round(stats.audioBufferedMs)} ms` : '—'}<td></tr>`;
+            }).join('')
+          : '<tr><td class="dim">no receiver attached — open /receiver on the head unit</td></tr>';
+
+        const trace = state.trace ?? [];
+        document.getElementById('trace').textContent =
+          trace.map((e) => `${(Number(e.atUs) / 1e6).toFixed(2).padStart(9)} ${e.channel.padEnd(9)} ${e.text}`).join('\n') || 'no events yet';
+        document.getElementById('trace').scrollTop = 1e9;
+      }
+
+      async function act(body) {
+        const response = await fetch('/admin/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        const result = await response.json();
+        if (!result.ok && result.error) alert(result.error);
+        refresh();
+      }
+      document.querySelectorAll('[data-action]').forEach((button) => (button.onclick = () => act({ type: button.dataset.action })));
+
+      await refresh();
+      setInterval(refresh, 1000);
+    </script>
+  </body>
+</html>
