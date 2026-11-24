@@ -17,9 +17,13 @@ jobs:
         os: [macos-12, macos-13, macos-14, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Echo runner capacity
+      - name: OS check
         run: |
           set -eu
           uname -a
           sw_vers
-          xcodebuild -version
+      - name: Xcode check
+        run: |
+          set -eu
+          xcode-select -p
+          xcodebuild -version | head -n 2
