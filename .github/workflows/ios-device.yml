@@ -42,7 +42,9 @@ permissions:
 
 jobs:
   parity:
-    runs-on: ubuntu-latest
+    # swift-actions/setup-swift@v2 currently supports the Ubuntu runners through 24.04; pin away
+    # from ubuntu-latest when an OS image bump can otherwise stop parity on its own.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
