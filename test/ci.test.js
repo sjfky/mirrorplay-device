@@ -27,8 +27,8 @@ const KNOWN = new Set([
   'awk', 'base64', 'basename', 'cat', 'command', 'cp', 'cut', 'du', 'find', 'grep', 'install', 'ls',
   'mkdir',   'mktemp', 'mv', 'od', 'rm', 'rmdir', 'sed', 'sh', 'sort', 'tail', 'tar', 'tr', 'uniq', 'wc',
   'zip', 'unzip', 'file', 'curl', 'python3', 'node', 'npm', 'git', 'sudo', 'apt-get',
-  'xcodebuild', 'xcodegen', 'xcrun', 'swift', 'plutil', 'codesign', 'security', 'lipo', 'defaults',
-  'brew',
+  'xcodebuild', 'xcodegen', 'xcrun', 'xcode-select', 'swift', 'plutil', 'codesign', 'security', 'lipo', 'defaults',
+  'brew', 'uname', 'sw_vers', 'zip', 'unzip', 'file',
 ]);
 
 function workflowFiles() {
