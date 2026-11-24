@@ -25,7 +25,7 @@ const KNOWN = new Set([
   'set', 'unset', 'export', 'local', 'readonly', 'trap', 'return', 'exit', 'break', 'continue',
   'test', 'true', 'false', 'echo', 'printf', 'read', 'shift', 'cd', 'source',
   'awk', 'base64', 'basename', 'cat', 'command', 'cp', 'cut', 'du', 'find', 'grep', 'install', 'ls',
-  'mkdir', 'mktemp', 'mv', 'od', 'rm', 'rmdir', 'sed', 'sh', 'sort', 'tail', 'tr', 'uniq', 'wc',
+  'mkdir',   'mktemp', 'mv', 'od', 'rm', 'rmdir', 'sed', 'sh', 'sort', 'tail', 'tar', 'tr', 'uniq', 'wc',
   'zip', 'unzip', 'file', 'curl', 'python3', 'node', 'npm', 'git', 'sudo', 'apt-get',
   'xcodebuild', 'xcodegen', 'xcrun', 'swift', 'plutil', 'codesign', 'security', 'lipo', 'defaults',
   'brew',

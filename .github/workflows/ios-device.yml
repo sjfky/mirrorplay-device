@@ -70,9 +70,17 @@ jobs:
             echo '::error::device-ios/Fixtures no longer match what src/protocol and src/media emit.'
             exit 1
           }
-      - uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: '5.9'
+      - name: Install Swift 6.0 from swift.org
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y binutils gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-13-dev libpython3-dev libsqlite3-0 libstdc++-13-dev libxml2-dev libz3-dev pkg-config tzdata zlib1g-dev curl tar zip unzip
+          curl -fsSL -o swift.tar.gz https://download.swift.org/swift-6.0-release/ubuntu2404/swift-6.0-RELEASE/swift-6.0-RELEASE-ubuntu24.04.tar.gz
+          mkdir swift
+          tar --strip-components=1 -xzf swift.tar.gz -C swift
+          rm -f swift.tar.gz
+          echo "$PWD/swift/usr/bin" >> "$GITHUB_PATH"
+          swift --version
       - name: Swift fixture tests — the same files, read by the other language
         working-directory: device-ios
         run: swift test
